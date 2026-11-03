@@ -1,0 +1,13 @@
+{
+  "authorization": {
+    "authorized_by": "Your Name / client contact",
+    "date": "2026-11-03",
+    "expires": "2027-02-01",
+    "statement": "Written permission to run passive recon and light TCP checks against the assets below."
+  },
+  "domains": ["example.com"],
+  "hosts": [],
+  "cidrs": ["203.0.113.0/24"],
+  "github": { "orgs": ["your-org"], "repos": ["your-user/your-repo"] },
+  "limits": { "max_ports": 100, "concurrency": 20, "connect_timeout_ms": 2000 }
+}
