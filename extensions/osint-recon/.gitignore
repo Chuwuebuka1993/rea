@@ -1,3 +1,5 @@
 node_modules
 osint-scope.json
 reports/
+guardian-accounts.json
+guardian-github-baseline.json

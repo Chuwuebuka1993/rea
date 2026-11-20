@@ -5,6 +5,7 @@ import { loadScope } from "./scope.js";
 import { createGithubTools } from "./tools/github.js";
 import { createMetaTools } from "./tools/meta.js";
 import { createReconTools } from "./tools/recon.js";
+import { createGuardianTools } from "./guardian/tools.js";
 
 /** Build the server. `scopeSource` is a path or a function returning a parsed scope. */
 export function buildServer({ scopeSource = process.env.OSINT_SCOPE_FILE ?? "osint-scope.json", env = process.env, cwd = process.cwd() } = {}) {
@@ -20,6 +21,7 @@ export function buildServer({ scopeSource = process.env.OSINT_SCOPE_FILE ?? "osi
     ...createMetaTools({ getScope, store, cwd }),
     ...createReconTools({ getScope }),
     ...createGithubTools({ getScope, env }),
+    ...createGuardianTools({ env, cwd }),
   ];
   return createServer({
     name: "rea-osint-recon",

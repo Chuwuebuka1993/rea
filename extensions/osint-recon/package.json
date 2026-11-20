@@ -4,7 +4,7 @@
   "private": true,
   "description": "Companion MCP server for REA: scope-gated GitHub OSINT and Kali-style recon tools in one app. Zero dependencies.",
   "type": "module",
-  "bin": { "rea-osint-recon": "src/server.js" },
+  "bin": { "rea-osint-recon": "src/server.js", "guardian": "src/guardian/cli.js" },
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test \"tests/*.test.js\""
