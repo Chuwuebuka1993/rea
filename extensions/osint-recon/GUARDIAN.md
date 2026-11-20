@@ -40,3 +40,15 @@ guardian watch 60                  # alerts via termux-notification if Termux:AP
 ## Not built yet
 
 Facebook/Google/WhatsApp have no public API for login history, so Guardian cannot watch them automatically: it can only keep them in the readiness registry and walk you through the checks. Ideas for later: Have I Been Pwned email breach checks (needs a paid key), encrypted offline recovery-kit vault, Gmail forwarding-rule audit via OAuth, team mode for SSNG / Igboukwu Labs / AFA Alpha / Apex Mall.
+
+## Auto-response (GitHub)
+
+`guardian watch 15 --enforce` repeats the audit and compares it with what **you approved**.
+
+1. Run `github-audit`, review the list, then `approve all`. Until you do, Guardian only alerts: it will not trust keys that may already belong to an intruder.
+2. Anything new and unapproved (SSH/GPG key, deploy key, webhook) raises an immediate alert, with a Termux notification.
+3. You have a 10-minute grace period to run `approve <key>` for something you added yourself.
+4. After that, with `--enforce`, Guardian revokes it through the GitHub API. Without `--enforce` it only reports "would revoke".
+5. If more than 5 items are due at once, it revokes nothing and escalates: that pattern looks like a mass compromise or a bug.
+
+It never changes passwords, never deletes repositories, and cannot remove emails. Token needs admin:public_key, admin:gpg_key, admin:repo_hook and repo to revoke. Approve things you add on purpose, or they will be removed.

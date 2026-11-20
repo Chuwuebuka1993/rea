@@ -121,3 +121,59 @@ test("playbooks exist for the apps in use, with sources and dates", () => {
   assert.equal(getPlaybook("nope"), undefined);
   assert.ok(listPlatforms().includes("generic"));
 });
+
+import { approve, respond, revoke } from "../src/guardian/respond.js";
+
+function mkSnap(extra = {}) { return { ssh_keys: [{ id: 1, title: "laptop", fingerprint: "SHA256:aaa" }], gpg_keys: [], emails: ["a@b.c"], deploy_keys: [], webhooks: [], ...extra }; }
+
+test("response: no baseline means alert only, never revoke", async () => {
+  const calls = [];
+  const s = { approved: null, pending: {}, log: [] };
+  const alerts = diffSnapshots({ ssh_keys: [] }, mkSnap());
+  const { events } = await respond({ alerts, state: s, enforce: true, token: "t", fetchImpl: async (u, o) => { calls.push(o.method); return { status: 204 }; } });
+  assert.equal(calls.length, 0);
+  assert.match(events[0].text, /no approved baseline/);
+});
+
+test("response: unapproved key alerts, waits for grace, then is revoked only with enforce", async () => {
+  const calls = [];
+  const fetchImpl = async (u, o) => { calls.push(`${o.method} ${u}`); return { status: 204 }; };
+  const state = { approved: mkSnap(), pending: {}, log: [] };
+  const now = 1_000_000;
+  const bad = mkSnap({ ssh_keys: [...mkSnap().ssh_keys, { id: 7, title: "intruder", fingerprint: "SHA256:bad" }] });
+  let r = await respond({ alerts: diffSnapshots(state.approved, bad), state, now, enforce: true, token: "t", fetchImpl });
+  assert.equal(calls.length, 0);
+  assert.match(r.events[0].text, /UNAPPROVED New SSH key/);
+  r = await respond({ alerts: diffSnapshots(state.approved, bad), state, now: now + 11 * 60000, enforce: false, token: "t", fetchImpl });
+  assert.equal(calls.length, 0);
+  assert.match(r.events[0].text, /dry run/);
+  r = await respond({ alerts: diffSnapshots(state.approved, bad), state, now: now + 12 * 60000, enforce: true, token: "t", fetchImpl });
+  assert.deepEqual(calls, ["DELETE https://api.github.com/user/keys/7"]);
+  assert.equal(r.events[0].level, "action");
+  assert.deepEqual(state.pending, {});
+});
+
+test("response: approving a pending item stops revocation", async () => {
+  const calls = [];
+  const state = { approved: mkSnap(), pending: {}, log: [] };
+  const bad = mkSnap({ webhooks: [{ repo: "me/app", id: 5, host: "x.io" }] });
+  await respond({ alerts: diffSnapshots(state.approved, bad), state, now: 0, enforce: true, token: "t" });
+  assert.match(approve(state, bad, "hook:me/app#5"), /approved/);
+  const alerts = diffSnapshots(state.approved, bad);
+  assert.equal(alerts.length, 0);
+  await respond({ alerts, state, now: 99 * 60000, enforce: true, token: "t", fetchImpl: async () => { calls.push(1); return { status: 204 }; } });
+  assert.equal(calls.length, 0);
+});
+
+test("response: circuit breaker refuses mass revocation; emails are never auto-revoked", async () => {
+  const calls = [];
+  const fetchImpl = async () => { calls.push(1); return { status: 204 }; };
+  const many = Array.from({ length: 6 }, (_, i) => ({ id: 10 + i, title: "k", fingerprint: `SHA256:${i}` }));
+  const state = { approved: mkSnap(), pending: {}, log: [] };
+  const snap = mkSnap({ ssh_keys: [...mkSnap().ssh_keys, ...many], emails: ["a@b.c", "evil@x.y"] });
+  await respond({ alerts: diffSnapshots(state.approved, snap), state, now: 0, enforce: true, token: "t", fetchImpl });
+  const r = await respond({ alerts: diffSnapshots(state.approved, snap), state, now: 99 * 60000, enforce: true, token: "t", fetchImpl });
+  assert.equal(calls.length, 0);
+  assert.ok(r.events.some((e) => e.level === "critical"));
+  await assert.rejects(() => revoke({ type: "email" }, { token: "t" }), /cannot be revoked/);
+});

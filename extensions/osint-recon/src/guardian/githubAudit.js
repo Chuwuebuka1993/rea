@@ -91,17 +91,20 @@ export async function auditGithub({ token, fetchImpl = fetch, now = Date.now(), 
 
 function safeHost(url) { try { return new URL(url).host; } catch { return "unparseable-url"; } }
 
-/** Compare a new snapshot with a saved baseline and raise an alert for anything new. */
+/** Compare a new snapshot with the approved one. Each alert carries a stable `key` and a `ref` so it can be approved or revoked. */
 export function diffSnapshots(oldS, newS) {
   const alerts = [];
-  const added = (list, key, label, sev = "high") => {
-    const before = new Set((oldS[list] ?? []).map((x) => x[key] ?? x));
-    for (const x of newS[list] ?? []) if (!before.has(x[key] ?? x)) alerts.push({ severity: sev, title: `New ${label}`, detail: typeof x === "string" ? x : JSON.stringify(x) });
+  const check = (list, type, idOf, label, sev = "high") => {
+    const before = new Set((oldS[list] ?? []).map(idOf));
+    for (const x of newS[list] ?? []) {
+      const id = idOf(x);
+      if (!before.has(id)) alerts.push({ severity: sev, title: `New ${label}`, detail: typeof x === "string" ? x : JSON.stringify(x), key: `${type}:${id}`, ref: { type, ...(typeof x === "object" ? x : { value: x }) } });
+    }
   };
-  added("ssh_keys", "fingerprint", "SSH key");
-  added("gpg_keys", "key_id", "GPG key");
-  added("emails", undefined, "email address");
-  added("deploy_keys", "id", "deploy key", "medium");
-  added("webhooks", "id", "webhook", "medium");
+  check("ssh_keys", "ssh", (k) => k.fingerprint, "SSH key");
+  check("gpg_keys", "gpg", (k) => k.key_id, "GPG key");
+  check("emails", "email", (e) => e, "email address");
+  check("deploy_keys", "deploy", (k) => `${k.repo}#${k.id}`, "deploy key", "medium");
+  check("webhooks", "hook", (h) => `${h.repo}#${h.id}`, "webhook", "medium");
   return alerts;
 }

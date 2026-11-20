@@ -5,13 +5,14 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { auditGithub, diffSnapshots } from "./githubAudit.js";
+import { approve, loadState, respond, saveState } from "./respond.js";
 import { pwnedCount, passwordVerdict } from "./hibp.js";
 import { triageAndroid, COLLECT_COMMANDS } from "./android.js";
 import { FIRST_HOUR, getPlaybook, listPlatforms } from "./playbooks.js";
 import { assessRegistry, loadRegistry, saveRegistry, upsertAccount } from "./registry.js";
 
 const REGISTRY = process.env.GUARDIAN_REGISTRY ?? "guardian-accounts.json";
-const BASELINE = process.env.GUARDIAN_BASELINE ?? "guardian-github-baseline.json";
+const STATE = process.env.GUARDIAN_STATE ?? "guardian-state.json";
 
 const HELP = `Guardian: defensive account watcher (your own accounts only)
   readiness                      score every registered account and list next actions
@@ -19,8 +20,10 @@ const HELP = `Guardian: defensive account watcher (your own accounts only)
   playbook <platform>            recovery steps (${listPlatforms().join(", ")})
   first-hour                     what to do in the first hour after a hack
   pwcheck                        check a password against known breaches (hidden prompt; only a 5-char hash prefix is sent)
-  github-audit                   audit your GitHub account (env GUARDIAN_GITHUB_TOKEN); first run saves a baseline
-  watch [minutes]                repeat the GitHub audit and alert on anything new (default 60)
+  github-audit                   audit GitHub (env GUARDIAN_GITHUB_TOKEN); alerts on anything not approved
+  approve all|<key>              trust what is currently on the account, or one pending item
+  pending                        items waiting for your approval
+  watch [minutes] [--enforce]    repeat the audit; with --enforce, revoke unapproved keys/hooks after a 10 min grace (default 15 min cycle)
   android-commands               adb commands to collect data
   android <dir> [iocs.txt]       triage files accessibility.txt, notification_listeners.txt, device_admins.txt, third_party_packages.txt`;
 
@@ -38,20 +41,19 @@ function askHidden(prompt) {
   });
 }
 
-async function githubCycle() {
-  const r = await auditGithub({ token: process.env.GUARDIAN_GITHUB_TOKEN });
+async function githubCycle({ enforce = false, graceMinutes = 10 } = {}) {
+  const token = process.env.GUARDIAN_GITHUB_TOKEN;
+  const r = await auditGithub({ token });
   console.log(r.summary);
   r.findings.forEach((f) => print(f.severity, f.title, f.detail));
-  let alerts = [];
-  if (fs.existsSync(BASELINE)) {
-    alerts = diffSnapshots(JSON.parse(fs.readFileSync(BASELINE, "utf8")), r.snapshot);
-    alerts.forEach((a) => { print(a.severity, a.title, a.detail); notify(`Guardian: ${a.title}`, a.detail); });
-    if (!alerts.length) console.log("No changes since baseline.");
-  } else {
-    fs.writeFileSync(BASELINE, JSON.stringify(r.snapshot, null, 2), { mode: 0o600 });
-    console.log(`Baseline saved to ${BASELINE}. Review the items above: anything you do not recognize is a warning sign.`);
-  }
-  return { r, alerts };
+  const state = loadState(STATE);
+  state.last_snapshot = r.snapshot;
+  const alerts = state.approved ? diffSnapshots(state.approved, r.snapshot) : r.snapshot.ssh_keys.map((k) => ({ title: "Existing SSH key", detail: `${k.title} ${k.fingerprint}`, key: `ssh:${k.fingerprint}`, ref: { type: "ssh" } }));
+  const { events } = await respond({ alerts, state, enforce, graceMs: graceMinutes * 60000, token });
+  events.forEach((e) => { print(e.level, e.text); if (["alert", "action", "critical"].includes(e.level)) notify(`Guardian ${e.level}`, e.text); });
+  if (!state.approved) console.log('No approved baseline yet. Review the list above, then run: guardian approve all');
+  else if (!events.length) console.log("No unapproved changes.");
+  saveState(STATE, state);
 }
 
 async function main([cmd, ...args]) {
@@ -85,11 +87,26 @@ async function main([cmd, ...args]) {
       return;
     }
     case "github-audit": await githubCycle(); return;
+    case "approve": {
+      const state = loadState(STATE);
+      if (args[0] === "all" && !state.last_snapshot) throw new Error("run github-audit first");
+      console.log(approve(state, state.last_snapshot, args[0] ?? ""));
+      saveState(STATE, state);
+      return;
+    }
+    case "pending": {
+      const p = Object.entries(loadState(STATE).pending);
+      if (!p.length) console.log("Nothing pending.");
+      p.forEach(([k, v]) => console.log(`${k}  first seen ${new Date(v.first_seen).toISOString()}  ${v.alert.detail}`));
+      return;
+    }
     case "watch": {
-      const mins = Number(args[0] ?? 60);
+      const enforce = args.includes("--enforce");
+      const rest = args.filter((a) => a !== "--enforce");
+      const mins = Number(rest[0] ?? 15);
       if (!(mins >= 1)) throw new Error("minutes must be >= 1");
       for (;;) {
-        try { await githubCycle(); } catch (e) { console.error(`watch error: ${e.message}`); }
+        try { await githubCycle({ enforce }); } catch (e) { console.error(`watch error: ${e.message}`); }
         await new Promise((r) => setTimeout(r, mins * 60000));
       }
     }
