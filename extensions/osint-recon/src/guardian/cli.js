@@ -9,6 +9,9 @@ import { approve, loadState, respond, saveState } from "./respond.js";
 import { pwnedCount, passwordVerdict } from "./hibp.js";
 import { triageAndroid, COLLECT_COMMANDS } from "./android.js";
 import { loadStix2Files } from "./stix.js";
+import { createCollector } from "../sentinel/server.js";
+import { Ledger } from "../sentinel/ledger.js";
+import { CanaryStore, makeCanary } from "../sentinel/canary.js";
 import { matchAcquisition, readAcquisition } from "./intake.js";
 import { FIRST_HOUR, getPlaybook, listPlatforms } from "./playbooks.js";
 import { assessRegistry, loadRegistry, saveRegistry, upsertAccount } from "./registry.js";
@@ -26,6 +29,7 @@ const HELP = `Guardian: defensive account watcher (your own accounts only)
   approve all|<key>              trust what is currently on the account, or one pending item
   pending                        items waiting for your approval
   watch [minutes] [--enforce]    repeat the audit; with --enforce, revoke unapproved keys/hooks after a 10 min grace (default 15 min cycle)
+  sentinel serve|verify|canary|tail  signed app-event collector with tamper-evident log and trap credentials
   android-qf <dir> --iocs f.stix2  check an AndroidQF folder against STIX2 indicator lists (same lists MVT uses)
   android-commands               adb commands to collect data
   android <dir> [iocs.txt]       triage files accessibility.txt, notification_listeners.txt, device_admins.txt, third_party_packages.txt`;
@@ -112,6 +116,36 @@ async function main([cmd, ...args]) {
         try { await githubCycle({ enforce }); } catch (e) { console.error(`watch error: ${e.message}`); }
         await new Promise((r) => setTimeout(r, mins * 60000));
       }
+    }
+    case "sentinel": {
+      const dir = process.env.SENTINEL_DIR ?? "sentinel-data";
+      const sub = args[0];
+      if (sub === "serve") {
+        const apps = {};
+        for (const [k, v] of Object.entries(process.env)) { const m = /^SENTINEL_SECRET_([A-Z0-9_]+)$/.exec(k); if (m && v.length >= 32) apps[m[1].toLowerCase()] = v; }
+        if (!Object.keys(apps).length) throw new Error("set SENTINEL_SECRET_<APP> (32+ chars), e.g. SENTINEL_SECRET_SSNG=$(openssl rand -hex 32)");
+        const c = createCollector({ dir, apps, ledgerKey: process.env.SENTINEL_LEDGER_KEY, notify: (a) => { print(a.severity, `${a.app}/${a.rule}`, a.message); if (["critical", "high"].includes(a.severity)) notify(`Sentinel ${a.severity}: ${a.rule}`, a.message); } });
+        const addr = await c.listen(Number(process.env.SENTINEL_PORT ?? 7070), process.env.SENTINEL_HOST ?? "127.0.0.1");
+        console.log(`Sentinel listening on ${addr.address}:${addr.port} for apps: ${Object.keys(apps).join(", ")}. Ledger: ${dir}`);
+        if (!process.env.SENTINEL_LEDGER_KEY) console.log("WARNING: SENTINEL_LEDGER_KEY is not set, so the ledger head is not signed.");
+        return new Promise(() => {});
+      }
+      if (sub === "verify") {
+        const r = new Ledger({ dir, key: process.env.SENTINEL_LEDGER_KEY }).verify();
+        console.log(r.ok ? `Ledger intact: ${r.entries} entries. Head ${r.head}. Record this hash somewhere off this machine.` : `LEDGER TAMPERED: ${r.error}`);
+        process.exitCode = r.ok ? 0 : 3;
+        return;
+      }
+      if (sub === "canary") {
+        const label = args[1];
+        if (!label) throw new Error("usage: sentinel canary <label> [api_key|token|password]");
+        const c = makeCanary(label, args[2]);
+        new CanaryStore(dir).add(c);
+        console.log(`Trap credential for "${label}" (shown once, only its hash is stored):\n${c.value}\nPlant it where an intruder would look. It must grant no access.`);
+        return;
+      }
+      if (sub === "tail") { new Ledger({ dir }).readAll().slice(-Number(args[1] ?? 20)).forEach((e) => console.log(`${e.seq} ${e.ts} ${e.event.app} ${e.event.type} ${e.event.actor ?? ""} ${e.event.ip ?? ""}`)); return; }
+      throw new Error("usage: sentinel serve | verify | canary <label> | tail [n]");
     }
     case "android-qf": {
       const dir = args[0];
