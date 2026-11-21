@@ -176,3 +176,19 @@ test("cli csv: parses naira to kobo and rejects bad rows", () => {
   assert.throws(() => parseCsv("id,ref,amount,date\n1,A,5,notadate"));
   assert.throws(() => parseCsv("id,ref,date\n1,A,2026-11-01"));
 });
+
+import { createAssuranceTools } from "../src/assurance/tools.js";
+test("mcp tools: reconcile reads CSVs, verify detects tampering, paths are confined", async () => {
+  const d = tmp();
+  fs.writeFileSync(path.join(d, "l.csv"), "id,ref,amount,date\nl1,A,10,2026-11-01\n");
+  fs.writeFileSync(path.join(d, "b.csv"), "id,ref,amount,date\nb1,A,10,2026-11-01\n");
+  const [rec, ver] = createAssuranceTools({ cwd: d });
+  assert.match((await rec.handler({ ledger_csv: "l.csv", bank_csv: "b.csv" })).summary, /1 matched/);
+  await assert.rejects(rec.handler({ ledger_csv: "../../etc/passwd", bank_csv: "b.csv" }));
+  const bd = path.join(d, "books"); const b = new Books({ dir: bd });
+  b.openAccount("bank:main", "asset"); b.openAccount("payable:w", "liability");
+  b.post({ id: "s", lines: [{ account: "bank:main", amount: 5000 }, { account: "payable:w", amount: -5000 }] });
+  assert.match((await ver.handler({ dir: "books" })).summary, /verified/);
+  const f = path.join(bd, "ledger.jsonl"); fs.writeFileSync(f, fs.readFileSync(f, "utf8").replace("5000", "9000"));
+  assert.match((await ver.handler({ dir: "books" })).summary, /FAILED/);
+});

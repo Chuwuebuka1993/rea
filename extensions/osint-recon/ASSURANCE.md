@@ -22,6 +22,8 @@ node src/assurance/cli.js recon ledger.csv bank.csv   # columns: id,ref,amount,d
 node src/assurance/cli.js evidence                    # control self-test report
 ```
 
+MCP tools: `assurance_reconcile`, `assurance_verify_books` (read-only, confined to the working directory).
+
 Wire Sentinel to the desk: `notify: (a) => desk.onSentinelAlert(a)`. In code: `import { Books, PayoutDesk, reconcile, IncidentLog } from "./src/assurance/index.js"`.
 
 ## Honest limits
