@@ -22,6 +22,8 @@ export class SentinelClient {
       return out;
     } catch (e) { return { ok: false, error: e.name }; }
   }
+  /** Label of the trap this value is, or undefined. Use it when your app must apply the resulting actions itself. */
+  isCanary(value) { return canaryLabel(value, this.canaries); }
   /** Call this wherever your app receives a credential it could not validate. A hit means a trap value was used. */
   async checkCredential(value, ctx = {}) {
     const label = canaryLabel(value, this.canaries);
