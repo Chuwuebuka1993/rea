@@ -52,3 +52,11 @@ Facebook/Google/WhatsApp have no public API for login history, so Guardian canno
 5. If more than 5 items are due at once, it revokes nothing and escalates: that pattern looks like a mass compromise or a bug.
 
 It never changes passwords, never deletes repositories, and cannot remove emails. Token needs admin:public_key, admin:gpg_key, admin:repo_hook and repo to revoke. Approve things you add on purpose, or they will be removed.
+
+## Spyware indicator lists (MVT-compatible)
+
+`guardian android-qf <acquisition-folder> --iocs list.stix2` reads an AndroidQF-style folder (packages.json, ps.txt, getprop.txt, settings_*.txt, files.json) and checks it against STIX2 indicator files: app ids, signing-certificate and file hashes, domains, processes, file paths and device properties. Every hit names the indicator set it came from, and anything not provided is reported as "Not checked" instead of silently passing.
+
+- Guardian ships no indicator lists. Get current ones from trusted public sources and check their licences.
+- Only examine a phone you own, or whose owner has freely consented knowing what is collected. MVT's licence makes this a condition of use.
+- Lists only catch known samples. A clean result is not proof the phone is safe.

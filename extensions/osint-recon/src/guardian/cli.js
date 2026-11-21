@@ -8,6 +8,8 @@ import { auditGithub, diffSnapshots } from "./githubAudit.js";
 import { approve, loadState, respond, saveState } from "./respond.js";
 import { pwnedCount, passwordVerdict } from "./hibp.js";
 import { triageAndroid, COLLECT_COMMANDS } from "./android.js";
+import { loadStix2Files } from "./stix.js";
+import { matchAcquisition, readAcquisition } from "./intake.js";
 import { FIRST_HOUR, getPlaybook, listPlatforms } from "./playbooks.js";
 import { assessRegistry, loadRegistry, saveRegistry, upsertAccount } from "./registry.js";
 
@@ -24,6 +26,7 @@ const HELP = `Guardian: defensive account watcher (your own accounts only)
   approve all|<key>              trust what is currently on the account, or one pending item
   pending                        items waiting for your approval
   watch [minutes] [--enforce]    repeat the audit; with --enforce, revoke unapproved keys/hooks after a 10 min grace (default 15 min cycle)
+  android-qf <dir> --iocs f.stix2  check an AndroidQF folder against STIX2 indicator lists (same lists MVT uses)
   android-commands               adb commands to collect data
   android <dir> [iocs.txt]       triage files accessibility.txt, notification_listeners.txt, device_admins.txt, third_party_packages.txt`;
 
@@ -109,6 +112,21 @@ async function main([cmd, ...args]) {
         try { await githubCycle({ enforce }); } catch (e) { console.error(`watch error: ${e.message}`); }
         await new Promise((r) => setTimeout(r, mins * 60000));
       }
+    }
+    case "android-qf": {
+      const dir = args[0];
+      const iocFiles = args.slice(1).filter((x) => x !== "--iocs");
+      if (!dir) throw new Error("usage: android-qf <acquisition-folder> --iocs a.stix2 [b.stix2]");
+      console.log("Consent check: only examine a phone you own or whose owner has freely agreed, knowing what is collected and how long it is kept.");
+      const { iocs, count, skipped } = loadStix2Files(iocFiles);
+      console.log(`Loaded ${count} indicators from ${iocFiles.length} file(s)${skipped ? ` (${skipped} unsupported patterns skipped)` : ""}.`);
+      const acq = readAcquisition(dir);
+      const r = triageAndroid({}, { extraFindings: matchAcquisition(acq, iocs), coverage: acq.missing });
+      console.log(`${r.summary}; found ${acq.found.join(", ") || "nothing"}`);
+      r.findings.forEach((f) => print(f.severity, f.title, f.detail));
+      if (!iocFiles.length) console.log("NOTE: no indicator files given, so only generic checks ran. Get current lists from a trusted source and pass them with --iocs.");
+      r.limits.forEach((l) => console.log(`NOTE: ${l}`));
+      return;
     }
     case "android-commands": Object.entries(COLLECT_COMMANDS).forEach(([k, v]) => console.log(`${k}: ${v}`)); return;
     case "android": {

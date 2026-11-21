@@ -52,9 +52,10 @@ const allowed = (pkg, allow) => allow.some((a) => (a.endsWith(".") ? pkg.startsW
  * @param {object} input  {accessibility, notification_listeners, device_admins, third_party_packages} raw command output
  * @param {object} opts   {allow: string[], iocs: string[]} iocs = package names you obtained from a trusted indicator list
  */
-export function triageAndroid(input = {}, { allow = DEFAULT_ALLOW, iocs = [] } = {}) {
-  const findings = [];
+export function triageAndroid(input = {}, { allow = DEFAULT_ALLOW, iocs = [], extraFindings = [], coverage = [] } = {}) {
+  const findings = [...extraFindings];
   const add = (severity, title, detail) => findings.push({ severity, title, detail });
+  for (const m of coverage) add("info", "Not checked", `${m} was not provided, so that part of the phone was not examined.`);
   const ioc = new Set(iocs.map((x) => x.toLowerCase()));
   const acc = parseComponents(input.accessibility);
   const nl = parseComponents(input.notification_listeners);

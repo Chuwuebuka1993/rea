@@ -177,3 +177,49 @@ test("response: circuit breaker refuses mass revocation; emails are never auto-r
   assert.ok(r.events.some((e) => e.level === "critical"));
   await assert.rejects(() => revoke({ type: "email" }, { token: "t" }), /cannot be revoked/);
 });
+
+import fs2 from "node:fs";
+import os2 from "node:os";
+import path2 from "node:path";
+import { parsePattern, parseStix2 } from "../src/guardian/stix.js";
+import { matchAcquisition, readAcquisition } from "../src/guardian/intake.js";
+
+const BUNDLE = JSON.stringify({ type: "bundle", objects: [
+  { type: "malware", id: "malware--1", name: "TestSpy" },
+  { type: "indicator", id: "indicator--1", pattern: "[app:id = 'com.evil.spy']" },
+  { type: "indicator", id: "indicator--2", pattern: "[domain-name:value = 'Evil.Example' OR file:hashes.'SHA-256' = 'ABCDEF']" },
+  { type: "indicator", id: "indicator--3", pattern: "[process:name = 'spyd']" },
+  { type: "indicator", id: "indicator--4", pattern: "[app:cert.sha1 = 'AA11']" },
+  { type: "indicator", id: "indicator--5", pattern: "[file:size > 5]" },
+  { type: "relationship", source_ref: "indicator--1", target_ref: "malware--1", relationship_type: "indicates" },
+] });
+
+test("stix: parses patterns, normalises hashes, attributes to malware, counts unsupported", () => {
+  assert.deepEqual(parsePattern("[file:hashes.'SHA-256' = 'AB' OR url:value = 'http://x']"), [["file:hashes.sha256", "AB"], ["url:value", "http://x"]]);
+  const r = parseStix2(BUNDLE);
+  assert.equal(r.iocs.app_ids.get("com.evil.spy"), "TestSpy");
+  assert.ok(r.iocs.domains.has("evil.example"));
+  assert.ok(r.iocs.sha256.has("abcdef"));
+  assert.equal(r.skipped, 1);
+  assert.throws(() => parseStix2("nope"), /not valid/);
+});
+
+test("androidqf intake matches packages, certs, processes and reports missing inputs", () => {
+  const d = fs2.mkdtempSync(path2.join(os2.tmpdir(), "aqf-"));
+  fs2.mkdirSync(path2.join(d, "run1"));
+  fs2.writeFileSync(path2.join(d, "run1", "packages.json"), JSON.stringify([
+    { name: "com.evil.spy", installer: "null", system: false, disabled: false, files: [] },
+    { name: "com.ok", installer: "com.android.vending", system: false, files: [{ path: "/x.apk", certificate: { Sha1: "aa11" } }] },
+  ]));
+  fs2.writeFileSync(path2.join(d, "run1", "ps.txt"), "USER PID PPID VSZ RSS WCHAN ADDR S NAME\nroot 1 0 1 1 x 0 S spyd\n");
+  const acq = readAcquisition(d);
+  assert.deepEqual(acq.found.sort(), ["packages.json", "ps.txt"]);
+  assert.ok(acq.missing.includes("getprop.txt"));
+  const f = matchAcquisition(acq, parseStix2(BUNDLE).iocs);
+  const t = f.map((x) => `${x.title}:${x.detail}`).join("\n");
+  assert.match(t, /Installed app matches.*com\.evil\.spy.*TestSpy/);
+  assert.match(t, /malicious certificate.*com\.ok/);
+  assert.match(t, /Running process.*spyd/);
+  const r = triageAndroid({}, { extraFindings: f, coverage: acq.missing });
+  assert.ok(r.findings.some((x) => x.title === "Not checked" && /getprop/.test(x.detail)));
+});
