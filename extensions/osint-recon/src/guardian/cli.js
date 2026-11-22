@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { auditGithub, diffSnapshots } from "./githubAudit.js";
+import { auditGmail, deleteFilter, newGmailFindings } from "./gmailAudit.js";
 import { approve, loadState, respond, saveState } from "./respond.js";
 import { pwnedCount, passwordVerdict } from "./hibp.js";
 import { triageAndroid, COLLECT_COMMANDS } from "./android.js";
@@ -26,6 +27,8 @@ const HELP = `Guardian: defensive account watcher (your own accounts only)
   first-hour                     what to do in the first hour after a hack
   pwcheck                        check a password against known breaches (hidden prompt; only a 5-char hash prefix is sent)
   github-audit                   audit GitHub (env GUARDIAN_GITHUB_TOKEN); alerts on anything not approved
+  gmail-audit [--enforce]        audit Gmail forwarding, filters, delegates (env GUARDIAN_GMAIL_TOKEN); --enforce deletes unapproved forwarding/hiding filters
+  gmail-approve all|<key>        trust what Gmail currently has, or one item
   approve all|<key>              trust what is currently on the account, or one pending item
   pending                        items waiting for your approval
   watch [minutes] [--enforce]    repeat the audit; with --enforce, revoke unapproved keys/hooks after a 10 min grace (default 15 min cycle)
@@ -94,6 +97,31 @@ async function main([cmd, ...args]) {
       return;
     }
     case "github-audit": await githubCycle(); return;
+    case "gmail-audit": {
+      const token = process.env.GUARDIAN_GMAIL_TOKEN, file = process.env.GUARDIAN_GMAIL_BASELINE ?? "guardian-gmail-baseline.json";
+      const r = await auditGmail({ token });
+      console.log(r.summary);
+      const base = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null;
+      fs.writeFileSync(file.replace(/\.json$/, ".last.json"), JSON.stringify(r.findings.map((f) => f.key)), { mode: 0o600 });
+      const fresh = base ? newGmailFindings(r.findings, base.approved) : r.findings;
+      fresh.forEach((f) => { print(f.severity, f.title, f.detail); if (f.severity === "high") notify("Guardian Gmail", f.title); });
+      if (!base) console.log("No approved baseline yet. Review the list, then run: gmail-approve all");
+      else if (!fresh.length) console.log("Nothing new since you approved.");
+      if (base && args.includes("--enforce")) for (const f of fresh.filter((x) => x.ref.type === "filter")) { try { await deleteFilter(f.ref.id, { token }); console.log(`Deleted filter ${f.ref.id}`); } catch (e) { console.error(e.message); } }
+      return;
+    }
+    case "gmail-approve": {
+      const file = process.env.GUARDIAN_GMAIL_BASELINE ?? "guardian-gmail-baseline.json", last = file.replace(/\.json$/, ".last.json");
+      if (!fs.existsSync(last)) throw new Error("run gmail-audit first");
+      const keys = JSON.parse(fs.readFileSync(last, "utf8"));
+      const base = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : { approved: [] };
+      const pick = args[0] === "all" ? keys : keys.filter((k) => k === args[0]);
+      if (!pick.length) throw new Error(`nothing matches "${args[0] ?? ""}"`);
+      base.approved = [...new Set([...base.approved, ...pick])];
+      fs.writeFileSync(file, JSON.stringify(base), { mode: 0o600 });
+      console.log(`Approved ${pick.length} item(s).`);
+      return;
+    }
     case "approve": {
       const state = loadState(STATE);
       if (args[0] === "all" && !state.last_snapshot) throw new Error("run github-audit first");

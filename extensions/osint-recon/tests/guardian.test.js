@@ -223,3 +223,23 @@ test("androidqf intake matches packages, certs, processes and reports missing in
   const r = triageAndroid({}, { extraFindings: f, coverage: acq.missing });
   assert.ok(r.findings.some((x) => x.title === "Not checked" && /getprop/.test(x.detail)));
 });
+
+import { auditGmail, newGmailFindings, deleteFilter } from "../src/guardian/gmailAudit.js";
+test("gmail audit: flags auto-forward, forwarding filter, hiding filter, delegate; baseline hides approved; delete works", async () => {
+  const data = {
+    filters: { filter: [{ id: "f1", criteria: { from: "bank" }, action: { forwardTo: "evil@x.com" } }, { id: "f2", criteria: { from: "google" }, action: { removeLabelIds: ["INBOX"] } }, { id: "f3", criteria: { from: "news" }, action: { addLabelIds: ["Label_1"] } }] },
+    forwardingAddresses: { forwardingAddresses: [{ forwardingEmail: "evil@x.com", verificationStatus: "accepted" }] },
+    autoForwarding: { enabled: true, emailAddress: "evil@x.com", disposition: "leaveInInbox" },
+    delegates: { delegates: [{ delegateEmail: "d@x.com", verificationStatus: "accepted" }] },
+  };
+  const calls = [];
+  const fetchImpl = async (url, o = {}) => { calls.push([o.method ?? "GET", url, o.headers.authorization]); const k = url.split("/settings/")[1]; return { ok: true, status: 200, json: async () => data[k] ?? {} }; };
+  const r = await auditGmail({ token: "T", fetchImpl });
+  assert.deepEqual(r.findings.map((f) => f.key).sort(), ["autofwd:evil@x.com", "delegate:d@x.com", "filter:f1", "filter:f2", "fwd:evil@x.com"]);
+  assert.equal(r.findings.filter((f) => f.severity === "high").length, 3);
+  assert.equal(newGmailFindings(r.findings, ["filter:f2", "fwd:evil@x.com"]).length, 3);
+  await deleteFilter("f1", { token: "T", fetchImpl });
+  assert.equal(calls.at(-1)[0], "DELETE"); assert.ok(calls.every((c) => c[2] === "Bearer T"));
+  await assert.rejects(auditGmail({}), /GUARDIAN_GMAIL_TOKEN/);
+  await assert.rejects(auditGmail({ token: "T", fetchImpl: async () => ({ ok: false, status: 401 }) }), /expired or missing scope/);
+});

@@ -39,7 +39,7 @@ guardian watch 60                  # alerts via termux-notification if Termux:AP
 
 ## Not built yet
 
-Facebook/Google/WhatsApp have no public API for login history, so Guardian cannot watch them automatically: it can only keep them in the readiness registry and walk you through the checks. Ideas for later: Have I Been Pwned email breach checks (needs a paid key), encrypted offline recovery-kit vault, Gmail forwarding-rule audit via OAuth, team mode for SSNG / Igboukwu Labs / AFA Alpha / Apex Mall.
+Facebook/Google/WhatsApp have no public API for login history, so Guardian cannot watch them automatically: it can only keep them in the readiness registry and walk you through the checks. Ideas for later: Have I Been Pwned email breach checks (needs a paid key), encrypted offline recovery-kit vault, team mode for SSNG / Igboukwu Labs / AFA Alpha / Apex Mall.
 
 ## Auto-response (GitHub)
 
@@ -60,3 +60,13 @@ It never changes passwords, never deletes repositories, and cannot remove emails
 - Guardian ships no indicator lists. Get current ones from trusted public sources and check their licences.
 - Only examine a phone you own, or whose owner has freely consented knowing what is collected. MVT's licence makes this a condition of use.
 - Lists only catch known samples. A clean result is not proof the phone is safe.
+
+## Gmail takeover audit
+
+`guardian gmail-audit` reads your Gmail settings and flags the tricks attackers use to keep access: auto-forwarding, forwarding addresses, filters that forward mail or hide security alerts (skip inbox / trash), and delegates.
+
+1. Create an OAuth access token for your own account yourself (scope `gmail.readonly`) and put it in `GUARDIAN_GMAIL_TOKEN`. Access tokens expire in about an hour. Never paste it into chat.
+2. Run `gmail-audit`, review the list, then `gmail-approve all` (or one key). Later runs only report what is new.
+3. `gmail-audit --enforce` deletes unapproved forwarding or hiding **filters** only (needs scope `gmail.settings.basic`). It never touches mail, and does not turn off auto-forwarding or remove delegates: do that by hand in Gmail settings.
+
+Limits: this reads settings only. It cannot see sign-in history or devices; check myaccount.google.com/security by hand. A new filter you create yourself will alert until you approve it.

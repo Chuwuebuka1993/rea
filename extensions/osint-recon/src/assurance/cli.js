@@ -8,6 +8,7 @@ import { PayoutDesk } from "./desk.js";
 import { controlTests, evidenceMarkdown } from "./evidence.js";
 import { reconcile } from "./recon.js";
 import { formatNaira, toKobo } from "./money.js";
+import { renderReconHtml } from "./report.js";
 
 /** Minimal CSV: header row, comma separated, no quoted commas. Columns: id,ref,amount,date[,batch,fee]. Amounts in naira like 1234.50. */
 export function parseCsv(text) {
@@ -22,10 +23,11 @@ export function parseCsv(text) {
 }
 const line = (r) => `${r.id ?? r.bank?.id} ${r.ref ?? r.bank?.ref} ${formatNaira(r.amount ?? r.bank?.amount)}`;
 
-async function main([cmd, a, b]) {
+async function main([cmd, a, b, c, d]) {
   if (cmd === "recon") {
     if (!a || !b) throw new Error("usage: recon <ledger.csv> <bank.csv>");
     const r = reconcile(parseCsv(fs.readFileSync(a, "utf8")), parseCsv(fs.readFileSync(b, "utf8")));
+    if (c === "--html") { if (!d) throw new Error("usage: recon <ledger.csv> <bank.csv> --html <out.html>"); fs.writeFileSync(d, renderReconHtml(r)); console.log(`Report written to ${d}`); }
     console.log(r.summary);
     r.settlements.forEach((s) => console.log(`SETTLED  ${s.bank.ref}: ${s.ledger.length} sales, fees ${formatNaira(s.fees)}`));
     r.needs_review.forEach((x) => console.log(`REVIEW   ${line(x)} ${x.why}${x.difference ? ` (difference ${formatNaira(x.difference)})` : ""}`));

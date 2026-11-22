@@ -3,3 +3,4 @@ osint-scope.json
 reports/
 guardian-accounts.json
 guardian-github-baseline.json
+guardian-gmail-baseline*.json

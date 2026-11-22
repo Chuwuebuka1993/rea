@@ -192,3 +192,10 @@ test("mcp tools: reconcile reads CSVs, verify detects tampering, paths are confi
   const f = path.join(bd, "ledger.jsonl"); fs.writeFileSync(f, fs.readFileSync(f, "utf8").replace("5000", "9000"));
   assert.match((await ver.handler({ dir: "books" })).summary, /FAILED/);
 });
+
+import { renderReconHtml } from "../src/assurance/report.js";
+test("report: html is self-contained and escapes hostile references", () => {
+  const r = reconcile([], [{ id: "b", ref: "<script>alert(1)</script>", amount: 100, date: "2026-11-01" }], { now: new Date("2026-11-05") });
+  const h = renderReconHtml(r);
+  assert.ok(!h.includes("<script>")); assert.ok(h.includes("&lt;script&gt;")); assert.ok(h.includes("viewport")); assert.ok(!/https?:\/\//.test(h));
+});

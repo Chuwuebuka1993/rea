@@ -22,6 +22,8 @@ node src/assurance/cli.js recon ledger.csv bank.csv   # columns: id,ref,amount,d
 node src/assurance/cli.js evidence                    # control self-test report
 ```
 
+Phone-friendly report: `recon ledger.csv bank.csv --html report.html` writes one offline page you can open in the phone browser (no scripts, no network, references escaped).
+
 MCP tools: `assurance_reconcile`, `assurance_verify_books` (read-only, confined to the working directory).
 
 Wire Sentinel to the desk: `notify: (a) => desk.onSentinelAlert(a)`. In code: `import { Books, PayoutDesk, reconcile, IncidentLog } from "./src/assurance/index.js"`.
