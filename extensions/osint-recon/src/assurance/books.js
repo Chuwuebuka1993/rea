@@ -5,12 +5,18 @@ import { toKobo } from "./money.js";
  * Double-entry books on the tamper-evident ledger. Amounts: debit positive, credit negative, integer kobo.
  * Rules enforced: every journal sums to zero; ids are idempotent (a retry never double-posts); nothing is edited or
  * deleted, a mistake is fixed by a reversal; accounts flagged nonNegative can never go below zero.
+ *
+ * Integrity model (P0): the chain is verified before any replay. A ledger that fails verification yields no
+ * balances and refuses postings until it is repaired or restored — a tampered history is never silently trusted.
  */
 export class Books {
   constructor({ dir, key } = {}) {
     this.ledger = new Ledger({ dir, key });
     this.accounts = new Map(); this.journals = new Map(); this.balances = new Map(); this.reversed = new Set();
-    for (const e of this.ledger.readAll()) this.#apply(e.event);
+    // P0: never rebuild balances from a ledger whose chain does not verify. Fail closed: no state, no posting.
+    const v = this.ledger.verify();
+    this.corrupt = v.ok ? null : v.error;
+    if (!this.corrupt) for (const e of this.ledger.readAll()) this.#apply(e.event);
   }
   #apply(ev) {
     if (ev.type === "account") this.accounts.set(ev.id, { kind: ev.kind, nonNegative: !!ev.nonNegative });
@@ -21,6 +27,7 @@ export class Books {
     }
   }
   openAccount(id, kind, { nonNegative = false } = {}) {
+    if (this.corrupt) throw new Error(`refusing to open an account: books failed verification (${this.corrupt}).`);
     if (!/^[a-z0-9:_-]{2,64}$/.test(id)) throw new Error("account id: lowercase letters, digits, : _ -");
     if (!["asset", "liability", "income", "expense", "equity"].includes(kind)) throw new Error("bad account kind");
     if (this.accounts.has(id)) return false;
@@ -30,6 +37,7 @@ export class Books {
   balance(id) { return this.balances.get(id) ?? 0; }
   /** @returns {{posted:boolean, duplicate?:boolean, journal:object}} */
   post({ id, memo = "", lines, ref, by, reverses }) {
+    if (this.corrupt) throw new Error(`refusing to post: books failed verification (${this.corrupt}). Restore from backup or run ledger repair() after investigating.`);
     if (!id) throw new Error("journal id (idempotency key) is required");
     if (this.journals.has(id)) return { posted: false, duplicate: true, journal: this.journals.get(id) };
     if (!Array.isArray(lines) || lines.length < 2) throw new Error("a journal needs at least two lines");
