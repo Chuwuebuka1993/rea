@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
@@ -242,4 +245,19 @@ test("gmail audit: flags auto-forward, forwarding filter, hiding filter, delegat
   assert.equal(calls.at(-1)[0], "DELETE"); assert.ok(calls.every((c) => c[2] === "Bearer T"));
   await assert.rejects(auditGmail({}), /GUARDIAN_GMAIL_TOKEN/);
   await assert.rejects(auditGmail({ token: "T", fetchImpl: async () => ({ ok: false, status: 401 }) }), /expired or missing scope/);
+});
+
+import { gatherStatus } from "../src/status.js";
+import { Books } from "../src/assurance/books.js";
+test("status: empty setup is 'setup' not 'ok'; healthy and tampered books are told apart", () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "st-"));
+  const env = { GUARDIAN_REGISTRY: `${d}/r.json`, GUARDIAN_STATE: `${d}/s.json`, GUARDIAN_GMAIL_BASELINE: `${d}/g.json`, SENTINEL_DIR: `${d}/sen`, ASSURANCE_DIR: `${d}/books` };
+  let r = gatherStatus({ env });
+  assert.ok(r.items.every((i) => i.level === "setup")); assert.match(r.summary, /not set up/);
+  const b = new Books({ dir: env.ASSURANCE_DIR });
+  b.openAccount("bank:main", "asset"); b.openAccount("payable:w", "liability");
+  b.post({ id: "s", lines: [{ account: "bank:main", amount: 5000 }, { account: "payable:w", amount: -5000 }] });
+  r = gatherStatus({ env }); assert.equal(r.items.find((i) => i.area === "books").level, "ok");
+  const f = `${env.ASSURANCE_DIR}/ledger.jsonl`; fs.writeFileSync(f, fs.readFileSync(f, "utf8").replace("5000", "9000"));
+  r = gatherStatus({ env }); assert.equal(r.items[0].area, "books"); assert.equal(r.items[0].level, "alert"); assert.match(r.summary, /ALERT/);
 });

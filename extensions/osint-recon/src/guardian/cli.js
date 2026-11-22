@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { auditGithub, diffSnapshots } from "./githubAudit.js";
+import { gatherStatus } from "../status.js";
 import { auditGmail, deleteFilter, newGmailFindings } from "./gmailAudit.js";
 import { approve, loadState, respond, saveState } from "./respond.js";
 import { pwnedCount, passwordVerdict } from "./hibp.js";
@@ -21,6 +22,7 @@ const REGISTRY = process.env.GUARDIAN_REGISTRY ?? "guardian-accounts.json";
 const STATE = process.env.GUARDIAN_STATE ?? "guardian-state.json";
 
 const HELP = `Guardian: defensive account watcher (your own accounts only)
+  status                         one offline summary: accounts, GitHub, Gmail, Sentinel log, finance books
   readiness                      score every registered account and list next actions
   add '<json>'                   add/update an account (no secrets), e.g. '{"id":"gmail-main","platform":"google","twofa":"totp"}'
   playbook <platform>            recovery steps (${listPlatforms().join(", ")})
@@ -68,6 +70,15 @@ async function githubCycle({ enforce = false, graceMinutes = 10 } = {}) {
 
 async function main([cmd, ...args]) {
   switch (cmd) {
+    case "status": {
+      const r = gatherStatus();
+      console.log(r.summary);
+      const tag = { alert: "ALERT", warn: "WARN ", setup: "SETUP", ok: "OK   " };
+      r.items.forEach((i) => { console.log(`[${tag[i.level]}] ${i.area}: ${i.text}${i.next ? `\n        next: ${i.next}` : ""}`); });
+      console.log(`NOTE: ${r.note}`);
+      if (r.items.some((i) => i.level === "alert")) { notify("Guardian status", r.summary); process.exitCode = 2; }
+      return;
+    }
     case "readiness": {
       const res = assessRegistry(loadRegistry(REGISTRY));
       console.log(`Overall recovery readiness: ${res.overall}/100`);
