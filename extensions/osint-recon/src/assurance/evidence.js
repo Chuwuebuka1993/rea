@@ -22,6 +22,22 @@ export function controlTests({ books, desk }) {
       const pd = new PayoutDesk({ books: pb, now: () => 1e12, coolOffMs: 0 });
       pd.addDestination("o", "d", "t");
       t("probe-maker-checker", "PR.AA", "A maker cannot approve their own payout", () => { const p = pd.request({ owner: "o", amount: "1.00", dest: "d", maker: "a" }); try { pd.approve(p.id, "a"); return false; } catch { return true; } });
+      t("probe-hold-independence", "PR.AA", "The person who placed a hold cannot release it", () => {
+        pd.holdOwner("o", "probe", "chi");
+        try { pd.releaseHold("o", "chi"); return false; } catch { /* expected */ }
+        try { pd.releaseHold("o", "tobi"); return !pd.holds.has("o"); } catch { return false; }
+      });
+      if (Object.keys(desk.approvers ?? {}).length) {
+        t("probe-approver-auth", "PR.AA", "Approvals require a valid proof from a registered approver", () => {
+          const secret = desk.approvers[Object.keys(desk.approvers)[0]];
+          const p = pd.request({ owner: "o", amount: "2.00", dest: "d", maker: "a" });
+          const name = Object.keys(desk.approvers)[0];
+          try { pd.approve(p.id, name); return false; } catch { /* no proof: expected */ }
+          try { pd.approve(p.id, name, "deadbeef".repeat(8)); return false; } catch { /* wrong proof: expected */ }
+          return true;
+        });
+      }
+      t("probe-durable-state", "PR.DS", "Payout desk state is durable (survives restart)", () => ({ ok: !!desk.file, detail: desk.file ? `state file: ${desk.file}` : "desk has no dir: state is in-memory only" }));
     }
   } finally { fs.rmSync(probeDir, { recursive: true, force: true }); }
   if (desk) t("breaker-state", "DE.CM", "Velocity breaker is not tripped", () => ({ ok: !desk.tripped, detail: desk.tripped?.why ?? "" }));

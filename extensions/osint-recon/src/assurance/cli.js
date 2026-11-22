@@ -40,7 +40,7 @@ async function main([cmd, a, b, c, d]) {
   if (cmd === "evidence") {
     const dir = a ?? fs.mkdtempSync(path.join(os.tmpdir(), "assure-"));
     const books = new Books({ dir, key: process.env.ASSURANCE_LEDGER_KEY });
-    console.log(evidenceMarkdown(controlTests({ books, desk: new PayoutDesk({ books }) })));
+    console.log(evidenceMarkdown(controlTests({ books, desk: new PayoutDesk({ books, dir: path.join(dir, "desk") }) })));
     return;
   }
   console.log("Assurance: recon <ledger.csv> <bank.csv> | evidence [books-dir]");
