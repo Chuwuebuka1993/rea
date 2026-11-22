@@ -7,22 +7,63 @@ import { validateEvent } from "./events.js";
 import { Ledger } from "./ledger.js";
 
 const MAX_BODY = 16 * 1024, SKEW_MS = 5 * 60000;
+// Nonces older than this can never be accepted again (the timestamp skew check would reject them first),
+// so the durable nonce store only needs to cover this window plus a safety margin.
+const NONCE_TTL_MS = 30 * 60000;
 
 export function sign(secret, ts, nonce, body) {
   return crypto.createHmac("sha256", secret).update(`${ts}.${nonce}.${body}`).digest("hex");
 }
 const safeEq = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 
+/** Durable, append-only nonce record so a collector restart cannot reopen the replay window. */
+class NonceStore {
+  constructor(file, now) { this.file = file; this.now = now; this.seen = new Map(); this.#load(); }
+  #load() {
+    if (!fs.existsSync(this.file)) return;
+    const t = this.now();
+    for (const line of fs.readFileSync(this.file, "utf8").split("\n").filter(Boolean)) {
+      try { const { k, at } = JSON.parse(line); if (typeof k === "string" && Number.isFinite(at) && t - at <= NONCE_TTL_MS) this.seen.set(k, at); } catch { /* skip malformed line */ }
+    }
+    this.#compact();
+  }
+  #compact() {
+    // Rewrite without expired entries once the file is mostly garbage; keeps restarts fast and the file bounded.
+    const t = this.now();
+    let lines = 0;
+    try { lines = fs.readFileSync(this.file, "utf8").split("\n").filter(Boolean).length; } catch { /* missing is fine */ }
+    if (lines > 0 && lines > this.seen.size * 2 + 100) {
+      const tmp = `${this.file}.tmp`;
+      fs.writeFileSync(tmp, [...this.seen].map(([k, at]) => `${JSON.stringify({ k, at })}\n`).join(""), { mode: 0o600 });
+      fs.renameSync(tmp, this.file);
+    }
+    for (const [k, at] of this.seen) if (t - at > NONCE_TTL_MS) this.seen.delete(k);
+  }
+  has(k) { return this.seen.has(k); }
+  add(k) {
+    const at = this.now();
+    this.seen.set(k, at);
+    const fd = fs.openSync(this.file, "a", 0o600);
+    try { fs.writeSync(fd, `${JSON.stringify({ k, at })}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    if (this.seen.size % 512 === 0) this.#compact();
+  }
+}
+
 /**
  * Collector. Apps POST signed events; it verifies, logs to the ledger, runs detectors and returns alerts with recommended actions.
  * apps: {appName: secret}. Binds to loopback by default: put it behind TLS if it must be reachable from other hosts.
+ *
+ * Integrity model (P0): the ledger chain is verified before any replay; if verification fails the collector refuses to start
+ * rather than rebuilding detector state from a tampered history. Replay protection is durable across restarts via NonceStore.
  */
 export function createCollector({ dir, apps, ledgerKey, notify = () => {}, now = () => Date.now(), detectorOpts, ratePerMin = 600 }) {
   const ledger = new Ledger({ dir, key: ledgerKey });
+  const integrity = ledger.verify();
+  if (!integrity.ok) throw new Error(`refusing to start: ledger failed verification (${integrity.error}). Fix or repair the log first; starting on a tampered history would hide the tampering.`);
   const detector = new Detector(detectorOpts);
-  for (const e of ledger.readAll()) detector.ingest(e); // rebuild windows after a restart
+  for (const e of ledger.readAll()) detector.ingest(e); // rebuild windows after a restart (chain already verified above)
   const alertsFile = path.join(dir, "alerts.jsonl");
-  const nonces = new Map();
+  const nonces = new NonceStore(path.join(dir, "nonces.jsonl"), now);
   const hits = new Map();
 
   function emit(a) {
@@ -51,12 +92,11 @@ export function createCollector({ dir, apps, ledgerKey, notify = () => {}, now =
     for (const k of hits.keys()) if (!k.endsWith(`|${minute}`)) hits.delete(k);
     if (hits.get(rk) > ratePerMin) return fail(429, "rate limit");
     if (Math.abs(now() - ts) > SKEW_MS) return fail(401, "stale timestamp");
-    for (const [n, t] of nonces) if (now() - t > SKEW_MS) nonces.delete(n);
     const nk = `${app}|${nonce}`;
     if (nonces.has(nk)) return fail(409, "replayed request");
-    nonces.set(nk, now());
     let event;
     try { event = validateEvent(JSON.parse(body)); } catch (e) { return fail(400, e.name === "UserError" ? e.message : "invalid JSON"); }
+    nonces.add(nk); // only persist the nonce once the request is fully valid; a 400 body can be retried with a fixed body
     event.app = app;
     const entry = ledger.append(event, new Date(now()).toISOString());
     const alerts = detector.ingest(entry);
