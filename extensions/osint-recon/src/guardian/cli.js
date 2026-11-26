@@ -34,6 +34,7 @@ const HELP = `Guardian: defensive account watcher (your own accounts only)
   approve all|<key>              trust what is currently on the account, or one pending item
   pending                        items waiting for your approval
   watch [minutes] [--enforce]    repeat the audit; with --enforce, revoke unapproved keys/hooks after a 10 min grace (default 15 min cycle)
+  afir-check                     (optional) confirm the local AFIR router gives Guardian a private-only, no-hosted policy; sends no data (env REA_AFIR_URL, REA_AFIR_TOKEN)
   sentinel serve|verify|canary|tail  signed app-event collector with tamper-evident log and trap credentials
   android-qf <dir> --iocs f.stix2  check an AndroidQF folder against STIX2 indicator lists (same lists MVT uses)
   android-commands               adb commands to collect data
@@ -77,6 +78,12 @@ async function main([cmd, ...args]) {
       r.items.forEach((i) => { console.log(`[${tag[i.level]}] ${i.area}: ${i.text}${i.next ? `\n        next: ${i.next}` : ""}`); });
       console.log(`NOTE: ${r.note}`);
       if (r.items.some((i) => i.level === "alert")) { notify("Guardian status", r.summary); process.exitCode = 2; }
+      return;
+    }
+    case "afir-check": {      // optional; sends no finding data, only reads this tenant's own policy from the local router
+      const { AfirClient } = await import("../afir/client.js");
+      try { const p = await new AfirClient().connect(); console.log(`AFIR OK: tenant ${p.tenant}, data ${p.data_class}, hosted providers ${p.hosted_providers}${p.limits ? `, limits ${JSON.stringify(p.limits)}` : ", no personal limits set"}`); }
+      catch (e) { console.error(`AFIR check failed: ${e.message}`); process.exitCode = 1; }
       return;
     }
     case "readiness": {
