@@ -16,6 +16,7 @@ import { Ledger } from "../sentinel/ledger.js";
 import { CanaryStore, makeCanary } from "../sentinel/canary.js";
 import { matchAcquisition, readAcquisition } from "./intake.js";
 import { FIRST_HOUR, getPlaybook, listPlatforms } from "./playbooks.js";
+import { scanCode, detectExternal, runExternal } from "./codeScan.js";
 import { assessRegistry, loadRegistry, saveRegistry, upsertAccount } from "./registry.js";
 
 const REGISTRY = process.env.GUARDIAN_REGISTRY ?? "guardian-accounts.json";
@@ -35,6 +36,9 @@ const HELP = `Guardian: defensive account watcher (your own accounts only)
   pending                        items waiting for your approval
   watch [minutes] [--enforce]    repeat the audit; with --enforce, revoke unapproved keys/hooks after a 10 min grace (default 15 min cycle)
   afir-check                     (optional) confirm the local AFIR router gives Guardian a private-only, no-hosted policy; sends no data (env REA_AFIR_URL, REA_AFIR_TOKEN)
+  scan-code <folder>             offline scan of YOUR OWN project for leaked keys and risky code (never prints secret values)
+  scanners                       which open-source scanners (gitleaks, semgrep, osv-scanner, trivy) you have installed
+  scan-with <tool> <folder>      run an installed scanner on your own folder
   sentinel serve|verify|canary|tail  signed app-event collector with tamper-evident log and trap credentials
   android-qf <dir> --iocs f.stix2  check an AndroidQF folder against STIX2 indicator lists (same lists MVT uses)
   android-commands               adb commands to collect data
@@ -105,6 +109,23 @@ async function main([cmd, ...args]) {
       console.log(`${pb.name} (verified ${pb.verified_on})\nStart here: ${pb.entry ?? "n/a"}\nSource: ${pb.source}`);
       for (const k of ["prepare", "recover", "after", "notes"]) if (pb[k]?.length) { console.log(`\n${k.toUpperCase()}`); pb[k].forEach((x, i) => console.log(`  ${i + 1}. ${x}`)); }
       return;
+    }
+    case "scan-code": {
+      if (!args[0]) { console.log("Usage: scan-code <folder>   (only folders you own)"); process.exitCode = 1; return; }
+      const r = scanCode(args[0]);
+      console.log(`Scanned ${r.filesScanned} files in ${r.root}${r.truncated ? " (stopped at the file limit)" : ""}: ${r.counts.high} high, ${r.counts.medium} medium, ${r.counts.low} low`);
+      r.findings.slice(0, 60).forEach((f) => print(f.severity, `${f.rule} ${f.file}${f.line ? `:${f.line}` : ""}`, f.why));
+      if (r.findings.length > 60) console.log(`...and ${r.findings.length - 60} more`);
+      console.log(`NOTE: ${r.note}`);
+      if (r.counts.high) { notify("Guardian code scan", `${r.counts.high} high-severity finding(s)`); process.exitCode = 2; }
+      return;
+    }
+    case "scanners": detectExternal().forEach((t) => console.log(`${t.installed ? "[INSTALLED]" : "[missing]  "} ${t.name} (${t.license}): ${t.job}`)); console.log("Guardian never downloads these. Install only from the project's official page."); return;
+    case "scan-with": {
+      if (!args[0] || !args[1]) { console.log("Usage: scan-with <gitleaks|semgrep|osv-scanner|trivy> <folder>"); process.exitCode = 1; return; }
+      const r = runExternal(args[0], args[1]);
+      if (r.missing) { console.log(`${args[0]} is not installed here. Run: scanners`); process.exitCode = 1; return; }
+      console.log(r.output); process.exitCode = r.ok ? 0 : 2; return;
     }
     case "first-hour": FIRST_HOUR.forEach((x, i) => console.log(`${i + 1}. ${x}`)); return;
     case "pwcheck": {

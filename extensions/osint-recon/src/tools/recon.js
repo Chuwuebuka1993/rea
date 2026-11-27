@@ -217,7 +217,8 @@ export function tlsProbe(scope, target, port) {
   return new Promise((resolve, reject) => {
     const socket = tls.connect({
       host: target.value, port, servername: target.kind === "domain" ? target.value : undefined,
-      rejectUnauthorized: false, lookup: guardedLookup(scope), timeout: 8000,
+      rejectUnauthorized: false, // guardian-scan: allow tls-verify-off (probe must read invalid certificates; sends no data)
+      lookup: guardedLookup(scope), timeout: 8000,
     });
     socket.once("secureConnect", () => {
       const cert = socket.getPeerCertificate();
@@ -249,7 +250,8 @@ export function headProbe(scope, target, { port, scheme, path }) {
     const req = mod.request(
       {
         host: target.value, port: port ?? (scheme === "http" ? 80 : 443), path, method: "GET",
-        servername: target.kind === "domain" ? target.value : undefined, rejectUnauthorized: false,
+        servername: target.kind === "domain" ? target.value : undefined,
+        rejectUnauthorized: false, // guardian-scan: allow tls-verify-off (header probe of in-scope target; no credentials sent)
         lookup: guardedLookup(scope), timeout: 10000,
         headers: { "user-agent": "rea-osint-recon/0.1", accept: "*/*", host: target.value },
       },

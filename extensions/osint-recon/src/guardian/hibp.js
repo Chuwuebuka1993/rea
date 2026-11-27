@@ -8,6 +8,7 @@ import { UserError } from "../validate.js";
  */
 export async function pwnedCount(password, { fetchImpl = fetch } = {}) {
   if (typeof password !== "string" || !password) throw new UserError("password must be a non-empty string");
+  // guardian-scan: allow weak-hash (the breach-check API is defined on SHA-1 prefixes; not used to store passwords)
   const sha1 = crypto.createHash("sha1").update(password, "utf8").digest("hex").toUpperCase();
   const prefix = sha1.slice(0, 5);
   const suffix = sha1.slice(5);
